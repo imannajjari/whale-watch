@@ -70,8 +70,7 @@ public sealed class WalletTrackRecordCalculator(SmartMoneySettings settings)
         long gapMs = Math.Max(1, _settings.TrackRecordClusterMinutes) * 60_000L;
         var pnls = new List<decimal>();
 
-        var closes = fills.Where(f => f.Direction.StartsWith("Close", StringComparison.OrdinalIgnoreCase));
-        foreach (var group in closes.GroupBy(f => (f.Coin, f.Direction)))
+        foreach (var group in fills.Where(WalletQualityFilter.IsClosingFill).GroupBy(f => (f.Coin, f.Direction)))
         {
             long lastMs = long.MinValue;
             decimal current = 0m;
