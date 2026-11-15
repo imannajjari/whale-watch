@@ -1,0 +1,82 @@
+name: Deploy Whale Bot Worker
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy the Cloudflare Worker
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_KV_NAMESPACE_ID: ${{ secrets.CLOUDFLARE_KV_NAMESPACE_ID }}
+      WHALE_WEBHOOK_SECRET: ${{ secrets.WHALE_WEBHOOK_SECRET }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    defaults:
+      run:
+        working-directory: cloudflare/whale-bot
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install pinned dependencies
+        run: npm ci
+
+      - name: Run Worker unit tests
+        run: node --test
+
+      - name: Check configuration
+        run: |
+          missing=0
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_KV_NAMESPACE_ID WHALE_WEBHOOK_SECRET TELEGRAM_CHAT_ID; do
+            if [ -z "${!name}" ]; then
+              echo "Repository secret $name is not set."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then exit 1; fi
+          # The namespace id is not committed: put the secret into wrangler.toml for this run only.
+          if [[ ! "$CLOUDFLARE_KV_NAMESPACE_ID" =~ ^[0-9a-f]{32}$ ]]; then
+            echo "CLOUDFLARE_KV_NAMESPACE_ID must be 32 lowercase hex characters."
+            exit 1
+          fi
+          if ! grep -q REPLACE_WITH_KV_NAMESPACE_ID wrangler.toml; then
+            echo "wrangler.toml has no namespace placeholder to fill."
+            exit 1
+          fi
+          sed -i "s/REPLACE_WITH_KV_NAMESPACE_ID/$CLOUDFLARE_KV_NAMESPACE_ID/" wrangler.toml
+
+      - name: Check the Cloudflare token
+        run: |
+          token="$(printf '%s' "$CLOUDFLARE_API_TOKEN" | tr -d '[:space:]')"
+          echo "::add-mask::$token"
+          echo "Token length as stored: ${#CLOUDFLARE_API_TOKEN}; without whitespace: ${#token}"
+          if [[ ! "$token" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            echo "The token contains characters a Cloudflare API token never has (quotes, a Bearer prefix or non-ASCII text). Copy it again."
+            exit 1
+          fi
+          echo "CLOUDFLARE_API_TOKEN=$token" >> "$GITHUB_ENV"
+          status="$(curl -sS -o "$RUNNER_TEMP/verify.json" -w '%{http_code}' -H "Authorization: Bearer $token" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify")"
+          echo "Token verify HTTP status: $status"
+          jq -r '"success=\(.success) status=\(.result.status // "n/a") errors=\([.errors[]?.message] | join("; "))"' "$RUNNER_TEMP/verify.json" || true
+          [ "$status" = "200" ] || exit 1
+
+      - name: Deploy Worker
+        run: npx wrangler deploy
+
+      - name: Set Worker secrets
+        run: |
+          printf '%s' "$WHALE_WEBHOOK_SECRET" | npx wrangler secret put WEBHOOK_SECRET
+          printf '%s' "$TELEGRAM_CHAT_ID" | npx wrangler secret put ALLOWED_CHAT_ID

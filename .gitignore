@@ -1,0 +1,8 @@
+bin/
+obj/
+.vs/
+*.user
+smart_money.db
+node_modules/
+.wrangler/
+.dev.vars

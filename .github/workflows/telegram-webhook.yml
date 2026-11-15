@@ -1,0 +1,64 @@
+name: Telegram Webhook
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'set points the bot at the Worker, info shows the current webhook, delete switches back to getUpdates polling'
+        type: choice
+        options:
+          - info
+          - set
+          - delete
+        default: info
+      worker_url:
+        description: 'Worker URL for "set", for example https://whale-bot.<subdomain>.workers.dev/webhook'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  webhook:
+    name: Manage the Telegram webhook
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Call Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          WHALE_WEBHOOK_SECRET: ${{ secrets.WHALE_WEBHOOK_SECRET }}
+          ACTION: ${{ inputs.action }}
+          WORKER_URL: ${{ inputs.worker_url }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+            echo "Repository secret TELEGRAM_BOT_TOKEN is not set."
+            exit 1
+          fi
+          api="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}"
+          case "$ACTION" in
+            set)
+              if [ -z "$WHALE_WEBHOOK_SECRET" ]; then
+                echo "Repository secret WHALE_WEBHOOK_SECRET is not set."
+                exit 1
+              fi
+              case "$WORKER_URL" in
+                https://*/webhook) ;;
+                *) echo "worker_url must look like https://<host>/webhook"; exit 1 ;;
+              esac
+              curl -fsS -X POST "$api/setWebhook" \
+                --data-urlencode "url=$WORKER_URL" \
+                --data-urlencode "secret_token=$WHALE_WEBHOOK_SECRET" \
+                --data-urlencode 'allowed_updates=["message"]'
+              ;;
+            info)
+              curl -fsS "$api/getWebhookInfo"
+              ;;
+            delete)
+              curl -fsS -X POST "$api/deleteWebhook"
+              ;;
+          esac
+          echo

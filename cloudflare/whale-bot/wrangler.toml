@@ -1,0 +1,8 @@
+name = "whale-bot"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[[kv_namespaces]]
+binding = "WHALE_KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"

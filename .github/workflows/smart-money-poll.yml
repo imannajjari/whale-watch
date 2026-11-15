@@ -1,0 +1,86 @@
+name: Smart Money Poller
+
+on:
+  schedule:
+    # Sparse fallback only: GitHub delays and drops scheduled runs. The real trigger is an external timer
+    # calling workflow_dispatch (see README.md).
+    - cron: '47 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: smart-money-poller
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    name: Poll Hyperliquid Smart Money
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Fetch Stored Database
+        run: |
+          if git ls-remote --exit-code --heads origin data/smart-money > /dev/null; then
+            git fetch origin data/smart-money
+            git show origin/data/smart-money:smart_money.db > smart_money.db
+            echo "Restored smart_money.db ($(stat -c %s smart_money.db) bytes)."
+          else
+            echo "No data/smart-money branch yet; starting with a fresh database."
+          fi
+
+      - name: Build
+        run: dotnet build src/WhaleWatch/WhaleWatch.csproj -c Release --nologo
+
+      - name: Run Smart Money Poller
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_DISPLAY_TIMEZONE: ${{ secrets.TELEGRAM_DISPLAY_TIMEZONE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_KV_NAMESPACE_ID: ${{ secrets.CLOUDFLARE_KV_NAMESPACE_ID }}
+        run: dotnet src/WhaleWatch/bin/Release/net8.0/WhaleWatch.dll --smart-money-poll
+
+      - name: Persist Database to data/smart-money Branch
+        if: success()
+        run: |
+          if [ ! -f smart_money.db ]; then
+            echo "No database file to persist."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          data_dir="$RUNNER_TEMP/data-branch"
+          if git ls-remote --exit-code --heads origin data/smart-money > /dev/null; then
+            git worktree add -B data/smart-money "$data_dir" origin/data/smart-money
+          else
+            git worktree add --detach "$data_dir"
+            git -C "$data_dir" checkout --orphan data/smart-money
+            git -C "$data_dir" rm -rf --quiet .
+          fi
+
+          cp smart_money.db "$data_dir/smart_money.db"
+          cd "$data_dir"
+          git add -f smart_money.db
+          if git diff --staged --quiet; then
+            echo "No database changes to commit."
+          else
+            git commit -m "chore(data): sync smart_money.db [skip ci]"
+            git push origin data/smart-money
+            echo "Database synced to data/smart-money."
+          fi
