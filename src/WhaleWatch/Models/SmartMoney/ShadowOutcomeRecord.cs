@@ -11,4 +11,5 @@ public record ShadowOutcomeRecord(
     string EngineDirection,
     string SmartMoneyStance,
     DateTimeOffset DecisionAtUtc,
-    decimal? OutcomeNetR);
+    decimal? OutcomeNetR,
+    string? ScoreWeightedStance = null);

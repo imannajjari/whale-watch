@@ -34,6 +34,18 @@ public sealed class SmartMoneySettings
     /// <summary>Minimum capital dominance ratio (0.50 to 1.0) required to establish a directional stance.</summary>
     public decimal MinWhaleConsensusRatio { get; set; } = 0.65m;
 
+    /// <summary>Minimum closed trades before a wallet gets a track-record score (below it the score is 0).</summary>
+    public int TrackRecordMinTrades { get; set; } = 15;
+
+    /// <summary>Pseudo-trades at a 50% win rate that pull a short record toward the middle.</summary>
+    public int TrackRecordPriorTrades { get; set; } = 10;
+
+    /// <summary>Minimum average winning trade in USD; excludes scalpers whose edge a delayed copy cannot capture.</summary>
+    public decimal TrackRecordMinAverageWinUsd { get; set; } = 100m;
+
+    /// <summary>Close fills of one coin and side closer together than this many minutes count as one trade.</summary>
+    public int TrackRecordClusterMinutes { get; set; } = 30;
+
     /// <summary>Number of recent closed candles within which an un-invalidated strategy signal remains eligible for confluence.</summary>
     public int SignalPersistenceBars { get; set; } = 3;
 }

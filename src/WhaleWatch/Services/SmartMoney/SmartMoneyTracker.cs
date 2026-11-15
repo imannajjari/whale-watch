@@ -27,6 +27,7 @@ public sealed class SmartMoneyTracker(
     private readonly ITelegramNotifier? _telegram = telegramNotifier;
     private readonly TelegramSettings? _telegramSettings = telegramSettings;
     private readonly WhaleAlertFormatter _whaleFormatter = new(telegramSettings?.DisplayTimeZone);
+    private readonly WalletTrackRecordCalculator _trackRecords = new(settings);
 
     public TimeSpan PollInterval => TimeSpan.FromSeconds(Math.Max(15, _settings.PollIntervalSeconds));
 
@@ -128,6 +129,12 @@ public sealed class SmartMoneyTracker(
         if (_telegram != null && _telegramSettings?.NotifyOnWhaleActivity == true && newlyInserted.Count > 0)
         {
             await NotifyWhaleEventsAsync(wallet.Address, newlyInserted, currentPositions, protectiveOrders, cancellationToken);
+        }
+
+        if (_settings.ShadowModeEnabled)
+        {
+            var record = _trackRecords.Calculate(wallet.Address, fills, currentPositions, _time.GetUtcNow());
+            await _repository.SaveWalletTrackRecordAsync(record, cancellationToken);
         }
 
         return newlyInserted.Count;

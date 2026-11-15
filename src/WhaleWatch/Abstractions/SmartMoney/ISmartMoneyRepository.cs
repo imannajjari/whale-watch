@@ -22,5 +22,7 @@ public interface ISmartMoneyRepository
     Task<IReadOnlyList<WalletProtectiveOrder>> GetProtectiveOrdersAsync(string? symbol = null, CancellationToken cancellationToken = default);
     Task<long> RecordShadowOutcomeAsync(ShadowOutcomeRecord record, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ShadowOutcomeRecord>> GetShadowOutcomesAsync(string? symbol = null, int limit = 100, CancellationToken cancellationToken = default);
+    Task SaveWalletTrackRecordAsync(WalletTrackRecord record, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<WalletTrackRecord>> GetWalletTrackRecordsAsync(CancellationToken cancellationToken = default);
     Task<int> UpdateShadowOutcomeResultAsync(long id, decimal outcomeNetR, CancellationToken cancellationToken = default);
 }
