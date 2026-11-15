@@ -27,6 +27,7 @@ public sealed class SmartMoneyTracker(
     private readonly ITelegramNotifier? _telegram = telegramNotifier;
     private readonly TelegramSettings? _telegramSettings = telegramSettings;
     private readonly WhaleAlertFormatter _whaleFormatter = new(telegramSettings?.DisplayTimeZone);
+    private readonly WalletTrackRecordCalculator _trackRecords = new(settings);
 
     public TimeSpan PollInterval => TimeSpan.FromSeconds(Math.Max(15, _settings.PollIntervalSeconds));
 
@@ -114,6 +115,7 @@ public sealed class SmartMoneyTracker(
 
         if (!_filter.HasMinimumClosedTrades(fills, _settings))
         {
+            await SaveTrackRecordAsync(wallet.Address, fills, currentPositions, cancellationToken);
             warnings.Add($"Wallet {wallet.Address} skipped: fewer than {_settings.MinClosedTrades} closed trades.");
             await _repository.SaveSnapshotPositionsAsync(wallet.Address, currentPositions, cancellationToken);
             await _repository.SaveProtectiveOrdersAsync(wallet.Address, protectiveOrders, cancellationToken);
@@ -130,7 +132,22 @@ public sealed class SmartMoneyTracker(
             await NotifyWhaleEventsAsync(wallet.Address, newlyInserted, currentPositions, protectiveOrders, cancellationToken);
         }
 
+        await SaveTrackRecordAsync(wallet.Address, fills, currentPositions, cancellationToken);
+
         return newlyInserted.Count;
+    }
+
+    private async Task SaveTrackRecordAsync(
+        string walletAddress,
+        IReadOnlyList<WalletFillEvent> fills,
+        IReadOnlyList<WalletPositionSnapshot> currentPositions,
+        CancellationToken cancellationToken)
+    {
+        if (!_settings.ShadowModeEnabled)
+            return;
+
+        var record = _trackRecords.Calculate(walletAddress, fills, currentPositions, _time.GetUtcNow());
+        await _repository.SaveWalletTrackRecordAsync(record, cancellationToken);
     }
 
     private async Task NotifyWhaleEventsAsync(

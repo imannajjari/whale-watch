@@ -119,12 +119,27 @@ public sealed class SqliteSmartMoneyRepository(string connectionString = "Data S
                     outcome_net_r TEXT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS wallet_track_records (
+                    wallet_address TEXT PRIMARY KEY,
+                    closed_trades INTEGER NOT NULL,
+                    wins INTEGER NOT NULL,
+                    smoothed_win_rate TEXT NOT NULL,
+                    profit_factor TEXT NOT NULL,
+                    average_win_usd TEXT NOT NULL,
+                    average_loss_usd TEXT NOT NULL,
+                    unrealized_loss_usd TEXT NOT NULL,
+                    is_qualified INTEGER NOT NULL,
+                    score TEXT NOT NULL,
+                    updated_at_utc TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS smart_money_meta (
                     meta_key TEXT PRIMARY KEY,
                     meta_value TEXT NOT NULL
                 );";
             await cmd.ExecuteNonQueryAsync(cancellationToken);
             await EnsurePositionEventColumnsAsync(connection, cancellationToken);
+            await EnsureShadowOutcomeColumnsAsync(connection, cancellationToken);
             _initialized = true;
         }
         finally
@@ -617,9 +632,10 @@ public sealed class SqliteSmartMoneyRepository(string connectionString = "Data S
             await connection.OpenAsync(cancellationToken);
             using var cmd = connection.CreateCommand();
             cmd.CommandText = @"
-                INSERT INTO shadow_outcomes (symbol, engine_direction, smart_money_stance, decision_at_utc, outcome_net_r)
-                VALUES ($sym, $dir, $stance, $at, $r);
+                INSERT INTO shadow_outcomes (symbol, engine_direction, smart_money_stance, decision_at_utc, outcome_net_r, score_weighted_stance)
+                VALUES ($sym, $dir, $stance, $at, $r, $weighted);
                 SELECT last_insert_rowid();";
+            cmd.Parameters.AddWithValue("$weighted", (object?)record.ScoreWeightedStance ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$sym", record.Symbol);
             cmd.Parameters.AddWithValue("$dir", record.EngineDirection);
             cmd.Parameters.AddWithValue("$stance", record.SmartMoneyStance);
@@ -650,11 +666,11 @@ public sealed class SqliteSmartMoneyRepository(string connectionString = "Data S
             await connection.OpenAsync(cancellationToken);
             using var cmd = connection.CreateCommand();
             cmd.CommandText = string.IsNullOrWhiteSpace(symbol)
-                ? @"SELECT id, symbol, engine_direction, smart_money_stance, decision_at_utc, outcome_net_r
+                ? @"SELECT id, symbol, engine_direction, smart_money_stance, decision_at_utc, outcome_net_r, score_weighted_stance
                     FROM shadow_outcomes
                     ORDER BY decision_at_utc DESC
                     LIMIT $lim;"
-                : @"SELECT id, symbol, engine_direction, smart_money_stance, decision_at_utc, outcome_net_r
+                : @"SELECT id, symbol, engine_direction, smart_money_stance, decision_at_utc, outcome_net_r, score_weighted_stance
                     FROM shadow_outcomes
                     WHERE symbol = $sym
                     ORDER BY decision_at_utc DESC
@@ -673,7 +689,97 @@ public sealed class SqliteSmartMoneyRepository(string connectionString = "Data S
                     reader.GetString(2),
                     reader.GetString(3),
                     DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture),
-                    reader.IsDBNull(5) ? null : ParseDecimal(reader.GetString(5))));
+                    reader.IsDBNull(5) ? null : ParseDecimal(reader.GetString(5)),
+                    reader.IsDBNull(6) ? null : reader.GetString(6)));
+            }
+
+            return list;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task SaveWalletTrackRecordAsync(
+        WalletTrackRecord record,
+        CancellationToken cancellationToken = default)
+    {
+        await InitializeAsync(cancellationToken);
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = @"
+                INSERT INTO wallet_track_records (
+                    wallet_address, closed_trades, wins, smoothed_win_rate, profit_factor, average_win_usd,
+                    average_loss_usd, unrealized_loss_usd, is_qualified, score, updated_at_utc
+                ) VALUES (
+                    $addr, $trades, $wins, $wr, $pf, $aw, $al, $ul, $q, $score, $upd
+                )
+                ON CONFLICT(wallet_address) DO UPDATE SET
+                    closed_trades = excluded.closed_trades,
+                    wins = excluded.wins,
+                    smoothed_win_rate = excluded.smoothed_win_rate,
+                    profit_factor = excluded.profit_factor,
+                    average_win_usd = excluded.average_win_usd,
+                    average_loss_usd = excluded.average_loss_usd,
+                    unrealized_loss_usd = excluded.unrealized_loss_usd,
+                    is_qualified = excluded.is_qualified,
+                    score = excluded.score,
+                    updated_at_utc = excluded.updated_at_utc;";
+            cmd.Parameters.AddWithValue("$addr", record.Address);
+            cmd.Parameters.AddWithValue("$trades", record.ClosedTrades);
+            cmd.Parameters.AddWithValue("$wins", record.Wins);
+            cmd.Parameters.AddWithValue("$wr", record.SmoothedWinRate.ToString(CultureInfo.InvariantCulture));
+            cmd.Parameters.AddWithValue("$pf", record.ProfitFactor.ToString(CultureInfo.InvariantCulture));
+            cmd.Parameters.AddWithValue("$aw", record.AverageWinUsd.ToString(CultureInfo.InvariantCulture));
+            cmd.Parameters.AddWithValue("$al", record.AverageLossUsd.ToString(CultureInfo.InvariantCulture));
+            cmd.Parameters.AddWithValue("$ul", record.UnrealizedLossUsd.ToString(CultureInfo.InvariantCulture));
+            cmd.Parameters.AddWithValue("$q", record.IsQualified ? 1 : 0);
+            cmd.Parameters.AddWithValue("$score", record.Score.ToString(CultureInfo.InvariantCulture));
+            cmd.Parameters.AddWithValue("$upd", record.UpdatedAtUtc.ToString("O", CultureInfo.InvariantCulture));
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<IReadOnlyList<WalletTrackRecord>> GetWalletTrackRecordsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await InitializeAsync(cancellationToken);
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = @"
+                SELECT wallet_address, closed_trades, wins, smoothed_win_rate, profit_factor, average_win_usd,
+                       average_loss_usd, unrealized_loss_usd, is_qualified, score, updated_at_utc
+                FROM wallet_track_records;";
+
+            var list = new List<WalletTrackRecord>();
+            using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                list.Add(new WalletTrackRecord(
+                    reader.GetString(0),
+                    reader.GetInt32(1),
+                    reader.GetInt32(2),
+                    ParseDecimal(reader.GetString(3)),
+                    ParseDecimal(reader.GetString(4)),
+                    ParseDecimal(reader.GetString(5)),
+                    ParseDecimal(reader.GetString(6)),
+                    ParseDecimal(reader.GetString(7)),
+                    reader.GetInt64(8) != 0,
+                    ParseDecimal(reader.GetString(9)),
+                    DateTimeOffset.Parse(reader.GetString(10), CultureInfo.InvariantCulture)));
             }
 
             return list;
@@ -738,6 +844,27 @@ public sealed class SqliteSmartMoneyRepository(string connectionString = "Data S
             alter.CommandText = "ALTER TABLE position_events ADD COLUMN closed_pnl_usd TEXT NOT NULL DEFAULT '0';";
             await alter.ExecuteNonQueryAsync(cancellationToken);
         }
+    }
+
+    private static async Task EnsureShadowOutcomeColumnsAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        bool hasColumn = false;
+        using (var pragma = connection.CreateCommand())
+        {
+            pragma.CommandText = "PRAGMA table_info(shadow_outcomes);";
+            using var reader = await pragma.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                hasColumn |= string.Equals(reader.GetString(1), "score_weighted_stance", StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (hasColumn)
+            return;
+
+        using var alter = connection.CreateCommand();
+        alter.CommandText = "ALTER TABLE shadow_outcomes ADD COLUMN score_weighted_stance TEXT NULL;";
+        await alter.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static decimal ParseDecimal(string value) =>

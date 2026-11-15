@@ -36,12 +36,13 @@ public sealed class WalletQualityFilter
         if (settings.MinClosedTrades <= 0)
             return true;
 
-        int closedCount = fills.Count(f =>
-            f.ClosedPnlUsd != 0m
-            || f.Direction.StartsWith("Close", StringComparison.OrdinalIgnoreCase));
-
-        return closedCount >= settings.MinClosedTrades;
+        return fills.Count(IsClosingFill) >= settings.MinClosedTrades;
     }
+
+    // Flips ("Long > Short") and liquidations carry realised PnL but do not start with "Close".
+    public static bool IsClosingFill(WalletFillEvent fill) =>
+        fill.ClosedPnlUsd != 0m
+        || fill.Direction.StartsWith("Close", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsEligible(TrackedWallet wallet, SmartMoneySettings settings)
     {

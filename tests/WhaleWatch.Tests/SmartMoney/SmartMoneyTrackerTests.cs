@@ -375,6 +375,90 @@ public sealed class SmartMoneyTrackerTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(true, 1)]
+    [InlineData(false, 0)]
+    public async Task PollOnceAsync_SavesTheWalletTrackRecordOnlyInShadowMode(bool shadowMode, int expectedRecords)
+    {
+        var now = new DateTimeOffset(2026, 11, 12, 12, 0, 0, TimeSpan.Zero);
+        var settings = new SmartMoneySettings
+        {
+            Enabled = true,
+            ShadowModeEnabled = shadowMode,
+            MinClosedTrades = 1,
+            MinAccountValueUsd = 10000m,
+            MinMonthPnlUsd = 1000m,
+            MinMonthRoi = 0.01m,
+            MinAllTimePnlUsd = 1000m
+        };
+        var source = new FakeSmartMoneySource
+        {
+            Leaderboard = [new TrackedWallet("0xw1", 100000m, 10000m, 0.2m, 50000m, 500000m, now)],
+            FillsByWallet =
+            {
+                ["0xw1"] = [new WalletFillEvent("0xw1", "ETH", "Close Long", 1m, 3000m, now.AddMinutes(-30).ToUnixTimeMilliseconds(), 1m, 200m, "h0")]
+            },
+            PositionsByWallet = { ["0xw1"] = [new WalletPositionSnapshot("0xw1", "BTC", "Short", 0.5m, 80000m, 40000m, -300m, 2m)] }
+        };
+
+        using var repo = new SqliteSmartMoneyRepository($"Data Source={_dbPath}");
+        var tracker = new SmartMoneyTracker(source, repo, new WalletQualityFilter(), settings, new FixedTimeProvider(now));
+
+        await tracker.PollOnceAsync();
+
+        var records = await repo.GetWalletTrackRecordsAsync();
+        Assert.Equal(expectedRecords, records.Count);
+        if (expectedRecords == 1)
+        {
+            Assert.Equal(1, records[0].ClosedTrades);
+            Assert.Equal(300m, records[0].UnrealizedLossUsd);
+            Assert.False(records[0].IsQualified);
+        }
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_ReplacesAQualifiedTrackRecordWhenTheWalletDropsBelowTheMinimum()
+    {
+        var now = new DateTimeOffset(2026, 11, 12, 12, 0, 0, TimeSpan.Zero);
+        var settings = new SmartMoneySettings
+        {
+            Enabled = true,
+            MinClosedTrades = 2,
+            TrackRecordMinTrades = 2,
+            MinAccountValueUsd = 10000m,
+            MinMonthPnlUsd = 1000m,
+            MinMonthRoi = 0.01m,
+            MinAllTimePnlUsd = 1000m
+        };
+        var source = new FakeSmartMoneySource
+        {
+            Leaderboard = [new TrackedWallet("0xw1", 100000m, 10000m, 0.2m, 50000m, 500000m, now)],
+            FillsByWallet =
+            {
+                ["0xw1"] =
+                [
+                    new WalletFillEvent("0xw1", "ETH", "Close Long", 1m, 3000m, now.AddMinutes(-90).ToUnixTimeMilliseconds(), 1m, 400m, "a"),
+                    new WalletFillEvent("0xw1", "BTC", "Close Long", 1m, 80000m, now.AddMinutes(-60).ToUnixTimeMilliseconds(), 1m, 400m, "b")
+                ]
+            },
+            PositionsByWallet = { ["0xw1"] = [] }
+        };
+
+        using var repo = new SqliteSmartMoneyRepository($"Data Source={_dbPath}");
+        var tracker = new SmartMoneyTracker(source, repo, new WalletQualityFilter(), settings, new FixedTimeProvider(now));
+
+        await tracker.PollOnceAsync();
+        Assert.True((await repo.GetWalletTrackRecordsAsync()).Single().IsQualified);
+
+        source.FillsByWallet["0xw1"] = [];
+        await tracker.PollOnceAsync();
+
+        var record = Assert.Single(await repo.GetWalletTrackRecordsAsync());
+        Assert.False(record.IsQualified);
+        Assert.Equal(0m, record.Score);
+        Assert.Equal(0, record.ClosedTrades);
+    }
+
     public void Dispose()
     {
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
