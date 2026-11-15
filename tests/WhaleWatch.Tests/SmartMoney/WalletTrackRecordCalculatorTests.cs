@@ -156,6 +156,34 @@ public class WalletTrackRecordCalculatorTests
         Assert.Equal(3, record.ClosedTrades);
     }
 
+    [Theory]
+    [InlineData("PURR/USDC")]
+    [InlineData("@107")]
+    public void Calculate_IgnoresSpotSells(string spotCoin)
+    {
+        var fills = new List<WalletFillEvent>
+        {
+            Close("ETH", "Close Long", 1000m, 300),
+            Close(spotCoin, "Sell", -700m, 200)
+        };
+
+        var record = Calculate(Settings(1), fills);
+
+        Assert.Equal(1, record.ClosedTrades);
+        Assert.Equal(0m, record.AverageLossUsd);
+        Assert.Equal(WalletTrackRecordCalculator.MaxProfitFactor, record.ProfitFactor);
+    }
+
+    [Fact]
+    public void Calculate_CountsPerpFillsOnPrefixedCoins()
+    {
+        var fills = new List<WalletFillEvent> { Close("xyz:TSLA", "Close Long", 300m, 100), Close("kPEPE", "Close Short", -50m, 200) };
+
+        var record = Calculate(Settings(1), fills);
+
+        Assert.Equal(2, record.ClosedTrades);
+    }
+
     [Fact]
     public void Calculate_IgnoresOpenFills()
     {

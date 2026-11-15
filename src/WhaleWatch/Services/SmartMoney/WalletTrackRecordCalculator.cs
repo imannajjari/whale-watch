@@ -70,7 +70,7 @@ public sealed class WalletTrackRecordCalculator(SmartMoneySettings settings)
         long gapMs = Math.Max(1, _settings.TrackRecordClusterMinutes) * 60_000L;
         var pnls = new List<decimal>();
 
-        foreach (var group in fills.Where(WalletQualityFilter.IsClosingFill).GroupBy(f => (f.Coin, f.Direction)))
+        foreach (var group in fills.Where(IsPerpClosingFill).GroupBy(f => (f.Coin, f.Direction)))
         {
             long lastMs = long.MinValue;
             decimal current = 0m;
@@ -94,4 +94,10 @@ public sealed class WalletTrackRecordCalculator(SmartMoneySettings settings)
 
         return pnls;
     }
+
+    // Spot sells ("PURR/USDC", "@107") carry PnL too but are not perp trades.
+    private static bool IsPerpClosingFill(WalletFillEvent fill) =>
+        WalletQualityFilter.IsClosingFill(fill)
+        && !fill.Coin.Contains('/')
+        && !fill.Coin.StartsWith('@');
 }
