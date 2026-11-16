@@ -113,7 +113,13 @@ public sealed class SmartMoneyTracker(
         var protectiveOrders = await _source.GetOpenProtectiveOrdersAsync(wallet.Address, cancellationToken);
         var previousPositions = await _repository.GetSnapshotPositionsAsync(wallet.Address, cancellationToken);
 
-        if (!_filter.HasMinimumClosedTrades(fills, currentPositions, _settings))
+        bool enoughClosedTrades = _filter.HasMinimumClosedTrades(fills, _settings);
+        bool largePosition = _filter.HoldsLargePosition(currentPositions, _settings);
+
+        if (!enoughClosedTrades && largePosition)
+            warnings.Add($"Wallet {wallet.Address} tracked despite fewer than {_settings.MinClosedTrades} closed trades: it holds a position of at least {_settings.LargePositionBypassUsd:N0} USD.");
+
+        if (!enoughClosedTrades && !largePosition)
         {
             await SaveTrackRecordAsync(wallet.Address, fills, currentPositions, cancellationToken);
             warnings.Add($"Wallet {wallet.Address} skipped: fewer than {_settings.MinClosedTrades} closed trades.");

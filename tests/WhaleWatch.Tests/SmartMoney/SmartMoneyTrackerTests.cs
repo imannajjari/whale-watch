@@ -309,6 +309,7 @@ public sealed class SmartMoneyTrackerTests : IDisposable
         var notifier = new RecordingNotifier();
 
         using var repo = new SqliteSmartMoneyRepository($"Data Source={_dbPath}");
+        // Under MinWhalePositionAlertUsd, so only the fill total could trigger an alert.
         var tracker = new SmartMoneyTracker(BtcSource(now, fills, 400000m), repo, new WalletQualityFilter(), WhaleSettings(), new FixedTimeProvider(now), notifier, WhaleTelegramSettings());
 
         var result = await tracker.PollOnceAsync();
@@ -351,7 +352,47 @@ public sealed class SmartMoneyTrackerTests : IDisposable
         var result = await tracker.PollOnceAsync();
 
         Assert.Equal(1, result.NewEventsCount);
-        Assert.Empty(result.Warnings);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Contains("tracked despite fewer than 10 closed trades", warning);
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_WalletWithFewClosedTradesAndNoLargePosition_IsStillSkipped()
+    {
+        var now = new DateTimeOffset(2026, 11, 15, 6, 20, 0, TimeSpan.Zero);
+        var fills = new List<WalletFillEvent> { Fill("h1", "Open Short", 0.8m, 64000m, now.AddMinutes(-9)) };
+        var settings = WhaleSettings();
+        settings.MinClosedTrades = 10;
+
+        using var repo = new SqliteSmartMoneyRepository($"Data Source={_dbPath}");
+        var tracker = new SmartMoneyTracker(BtcSource(now, fills, 400000m), repo, new WalletQualityFilter(), settings, new FixedTimeProvider(now), new RecordingNotifier(), WhaleTelegramSettings());
+
+        var result = await tracker.PollOnceAsync();
+
+        Assert.Equal(0, result.NewEventsCount);
+        Assert.Contains("skipped: fewer than 10 closed trades", Assert.Single(result.Warnings));
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_FlipIntoALargePosition_AlertsFromTheSnapshotNotTheFlipFill()
+    {
+        var first = new DateTimeOffset(2026, 11, 15, 6, 0, 0, TimeSpan.Zero);
+        var second = first.AddMinutes(5);
+        var source = BtcSource(first, [], 400000m);
+        source.PositionsByWallet["0xw1"] = [new WalletPositionSnapshot("0xw1", "BTC", "Long", 6m, 64000m, 400000m, 0m, 5m)];
+        var notifier = new RecordingNotifier();
+
+        using var repo = new SqliteSmartMoneyRepository($"Data Source={_dbPath}");
+        await new SmartMoneyTracker(source, repo, new WalletQualityFilter(), WhaleSettings(), new FixedTimeProvider(first), notifier, WhaleTelegramSettings()).PollOnceAsync();
+        notifier.Messages.Clear();
+        source.FillsByWallet["0xw1"] = [Fill("flip", "Long > Short", 15m, 64000m, second.AddMinutes(-1))];
+        source.PositionsByWallet["0xw1"] = [new WalletPositionSnapshot("0xw1", "BTC", "Short", 9m, 64000m, 600000m, 0m, 5m)];
+
+        await new SmartMoneyTracker(source, repo, new WalletQualityFilter(), WhaleSettings(), new FixedTimeProvider(second), notifier, WhaleTelegramSettings()).PollOnceAsync();
+
+        var message = Assert.Single(notifier.Messages);
+        Assert.Contains("SHORT", message.ToUpperInvariant());
+        Assert.Contains("already open, first seen", message);
     }
 
     [Fact]

@@ -28,18 +28,23 @@ public sealed class WalletQualityFilter
 
     public bool HasMinimumClosedTrades(
         IReadOnlyList<WalletFillEvent> fills,
-        IReadOnlyList<WalletPositionSnapshot> currentPositions,
         SmartMoneySettings settings)
     {
         ArgumentNullException.ThrowIfNull(fills);
-        ArgumentNullException.ThrowIfNull(currentPositions);
         ArgumentNullException.ThrowIfNull(settings);
 
         if (settings.MinClosedTrades <= 0)
             return true;
 
-        if (fills.Count(IsClosingFill) >= settings.MinClosedTrades)
-            return true;
+        return fills.Count(IsClosingFill) >= settings.MinClosedTrades;
+    }
+
+    public bool HoldsLargePosition(
+        IReadOnlyList<WalletPositionSnapshot> currentPositions,
+        SmartMoneySettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(currentPositions);
+        ArgumentNullException.ThrowIfNull(settings);
 
         return settings.LargePositionBypassUsd > 0m
             && currentPositions.Any(p => p.PositionValueUsd >= settings.LargePositionBypassUsd);
