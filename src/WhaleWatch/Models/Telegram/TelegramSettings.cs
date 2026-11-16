@@ -8,5 +8,6 @@ public sealed class TelegramSettings
     public bool NotifyOnWhaleActivity { get; set; } = true;
     public bool NotifyOnConfirmedSetups { get; set; } = true;
     public decimal MinWhalePositionAlertUsd { get; set; } = 500000m;
+    public decimal MinWhaleFillAlertUsd { get; set; } = 50000m;
     public string DisplayTimeZone { get; set; } = "UTC";
 }

@@ -113,7 +113,7 @@ public sealed class SmartMoneyTracker(
         var protectiveOrders = await _source.GetOpenProtectiveOrdersAsync(wallet.Address, cancellationToken);
         var previousPositions = await _repository.GetSnapshotPositionsAsync(wallet.Address, cancellationToken);
 
-        if (!_filter.HasMinimumClosedTrades(fills, _settings))
+        if (!_filter.HasMinimumClosedTrades(fills, currentPositions, _settings))
         {
             await SaveTrackRecordAsync(wallet.Address, fills, currentPositions, cancellationToken);
             warnings.Add($"Wallet {wallet.Address} skipped: fewer than {_settings.MinClosedTrades} closed trades.");
@@ -163,6 +163,7 @@ public sealed class SmartMoneyTracker(
         try
         {
             decimal threshold = _telegramSettings?.MinWhalePositionAlertUsd ?? 500000m;
+            decimal minFill = _telegramSettings?.MinWhaleFillAlertUsd ?? 50000m;
             string safeAddress = walletAddress.Length >= 14
                 ? $"{walletAddress[..8]}...{walletAddress[^6..]}"
                 : walletAddress;
@@ -185,10 +186,10 @@ public sealed class SmartMoneyTracker(
 
             foreach (var group in fillGroups)
             {
-                if (!WhaleAlertFormatter.ShouldAlert(group, threshold))
+                currentByKey.TryGetValue((group.Coin, group.Direction), out var current);
+                if (!WhaleAlertFormatter.ShouldAlert(group, current, threshold, minFill))
                     continue;
 
-                currentByKey.TryGetValue((group.Coin, group.Direction), out var current);
                 await _telegram.SendMessageAsync(_whaleFormatter.FormatGroup(group, current, safeAddress, context), cancellationToken);
             }
         }

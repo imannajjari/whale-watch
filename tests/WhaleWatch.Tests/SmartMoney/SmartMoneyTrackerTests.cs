@@ -262,13 +262,13 @@ public sealed class SmartMoneyTrackerTests : IDisposable
     private static WalletFillEvent Fill(string hash, string direction, decimal size, decimal price, DateTimeOffset at, decimal pnl = 0m) =>
         new("0xw1", "BTC", direction, size, price, at.ToUnixTimeMilliseconds(), 0m, pnl, hash);
 
-    private static FakeSmartMoneySource BtcSource(DateTimeOffset now, List<WalletFillEvent> fills) => new()
+    private static FakeSmartMoneySource BtcSource(DateTimeOffset now, List<WalletFillEvent> fills, decimal positionValueUsd = 5578000m) => new()
     {
         Leaderboard = [new TrackedWallet("0xw1", 100000m, 10000m, 0.2m, 50000m, 500000m, now)],
         FillsByWallet = { ["0xw1"] = fills },
         PositionsByWallet =
         {
-            ["0xw1"] = [new WalletPositionSnapshot("0xw1", "BTC", "Short", 86.6m, 64236.3m, 5578000m, -15000m, 40m, 65051.31m, 125441m)]
+            ["0xw1"] = [new WalletPositionSnapshot("0xw1", "BTC", "Short", 86.6m, 64236.3m, positionValueUsd, -15000m, 40m, 65051.31m, 125441m)]
         },
         ProtectiveByWallet =
         {
@@ -309,12 +309,49 @@ public sealed class SmartMoneyTrackerTests : IDisposable
         var notifier = new RecordingNotifier();
 
         using var repo = new SqliteSmartMoneyRepository($"Data Source={_dbPath}");
-        var tracker = new SmartMoneyTracker(BtcSource(now, fills), repo, new WalletQualityFilter(), WhaleSettings(), new FixedTimeProvider(now), notifier, WhaleTelegramSettings());
+        var tracker = new SmartMoneyTracker(BtcSource(now, fills, 400000m), repo, new WalletQualityFilter(), WhaleSettings(), new FixedTimeProvider(now), notifier, WhaleTelegramSettings());
 
         var result = await tracker.PollOnceAsync();
 
         Assert.Equal(5, result.NewEventsCount);
         Assert.Empty(notifier.Messages);
+    }
+
+    [Theory]
+    [InlineData(5, 1)]
+    [InlineData(1, 0)]
+    public async Task PollOnceAsync_SmallFillsOnALargePosition_AlertOnlyWhenTheRunTradedEnough(int fillCount, int expectedMessages)
+    {
+        var now = new DateTimeOffset(2026, 11, 15, 6, 20, 0, TimeSpan.Zero);
+        var fills = new List<WalletFillEvent>();
+        for (int i = 0; i < fillCount; i++)
+            fills.Add(Fill($"h{i}", "Open Short", 0.5m, 64000m, now.AddMinutes(-9).AddSeconds(i)));
+        var notifier = new RecordingNotifier();
+
+        using var repo = new SqliteSmartMoneyRepository($"Data Source={_dbPath}");
+        var tracker = new SmartMoneyTracker(BtcSource(now, fills, 5578000m), repo, new WalletQualityFilter(), WhaleSettings(), new FixedTimeProvider(now), notifier, WhaleTelegramSettings());
+
+        await tracker.PollOnceAsync();
+
+        Assert.Equal(expectedMessages, notifier.Messages.Count);
+    }
+
+    [Fact]
+    public async Task PollOnceAsync_WalletWithALargePositionAndFewClosedTrades_IsStillTracked()
+    {
+        var now = new DateTimeOffset(2026, 11, 15, 6, 20, 0, TimeSpan.Zero);
+        var fills = new List<WalletFillEvent> { Fill("h1", "Open Short", 0.8m, 64000m, now.AddMinutes(-9)) };
+        var settings = WhaleSettings();
+        settings.MinClosedTrades = 10;
+        var notifier = new RecordingNotifier();
+
+        using var repo = new SqliteSmartMoneyRepository($"Data Source={_dbPath}");
+        var tracker = new SmartMoneyTracker(BtcSource(now, fills, 5578000m), repo, new WalletQualityFilter(), settings, new FixedTimeProvider(now), notifier, WhaleTelegramSettings());
+
+        var result = await tracker.PollOnceAsync();
+
+        Assert.Equal(1, result.NewEventsCount);
+        Assert.Empty(result.Warnings);
     }
 
     [Fact]

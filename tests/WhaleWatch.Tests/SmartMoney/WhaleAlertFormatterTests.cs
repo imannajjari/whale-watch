@@ -174,8 +174,22 @@ public sealed class WhaleAlertFormatterTests
         var group = Assert.Single(WhaleAlertFormatter.Group(fills));
 
         Assert.All(fills, f => Assert.False(WhaleAlertFormatter.ShouldAlert(f, null, 500000m)));
-        Assert.True(WhaleAlertFormatter.ShouldAlert(group, 500000m));
-        Assert.False(WhaleAlertFormatter.ShouldAlert(group, 700000m));
+        Assert.True(WhaleAlertFormatter.ShouldAlert(group, null, 500000m, 50000m));
+        Assert.False(WhaleAlertFormatter.ShouldAlert(group, null, 700000m, 50000m));
+    }
+
+    [Theory]
+    [InlineData("Open", 600000, 60000, true)]
+    [InlineData("Open", 600000, 49000, false)]
+    [InlineData("Open", 400000, 60000, false)]
+    [InlineData("Close", 600000, 60000, false)]
+    public void ShouldAlert_Group_AlertsOnALargePositionOnlyWhenTheRunTradedEnough(string action, int positionValueUsd, int fillNotionalUsd, bool expected)
+    {
+        var fills = new[] { BtcFill("f1", "Short", action, fillNotionalUsd / 64000m, 64000m, 0) };
+        var group = Assert.Single(WhaleAlertFormatter.Group(fills));
+        var position = new WalletPositionSnapshot("0xw1", "BTC", "Short", 10m, 64000m, positionValueUsd, 0m, 5m);
+
+        Assert.Equal(expected, WhaleAlertFormatter.ShouldAlert(group, position, 500000m, 50000m));
     }
 
     [Fact]
