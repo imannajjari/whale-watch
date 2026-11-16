@@ -19,6 +19,9 @@ public sealed class SmartMoneySettings
     public decimal MaxVolumeToPnlRatio { get; set; } = 500m;
     public int MinClosedTrades { get; set; } = 10;
 
+    /// <summary>A wallet holding a position at least this large (USD) is tracked even with fewer than MinClosedTrades closed trades; 0 turns it off.</summary>
+    public decimal LargePositionBypassUsd { get; set; } = 500000m;
+
     /// <summary>Records shadow outcomes for offline validation without impacting live decisions.</summary>
     public bool ShadowModeEnabled { get; set; } = true;
 

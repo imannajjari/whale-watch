@@ -64,8 +64,11 @@ public sealed class WhaleAlertFormatter
             .OrderBy(g => g.FirstTimeUtc)
             .ToList();
 
-    public static bool ShouldAlert(WhaleEventGroup group, decimal thresholdUsd) =>
-        group.TotalNotionalUsd >= thresholdUsd || Math.Abs(group.TotalClosedPnlUsd) >= thresholdUsd;
+    public static bool ShouldAlert(WhaleEventGroup group, WalletPositionSnapshot? current, decimal thresholdUsd, decimal minFillUsd) =>
+        group.TotalNotionalUsd >= thresholdUsd
+        || Math.Abs(group.TotalClosedPnlUsd) >= thresholdUsd
+        || (group.Action == "Open" && current is not null
+            && current.PositionValueUsd >= thresholdUsd && group.TotalNotionalUsd >= minFillUsd);
 
     public string FormatGroup(WhaleEventGroup group, WalletPositionSnapshot? current, string safeAddress, WhaleAlertContext? context = null)
     {

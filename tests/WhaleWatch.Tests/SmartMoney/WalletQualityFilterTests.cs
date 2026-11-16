@@ -54,4 +54,32 @@ public sealed class WalletQualityFilterTests
         var filter = new WalletQualityFilter();
         Assert.True(filter.HasMinimumClosedTrades(fills, settings));
     }
+
+    [Theory]
+    [InlineData(499999, false)]
+    [InlineData(500000, true)]
+    public void HoldsLargePosition_IsTrueFromTheBypassThreshold(int positionValueUsd, bool expected)
+    {
+        var settings = new SmartMoneySettings { LargePositionBypassUsd = 500000m };
+        var positions = new List<WalletPositionSnapshot>
+        {
+            new("0x1", "BTC", "Short", 1m, 80000m, positionValueUsd, 0m, 5m)
+        };
+
+        var filter = new WalletQualityFilter();
+        Assert.Equal(expected, filter.HoldsLargePosition(positions, settings));
+    }
+
+    [Fact]
+    public void HoldsLargePosition_IsFalseWhenTheBypassIsOff()
+    {
+        var settings = new SmartMoneySettings { LargePositionBypassUsd = 0m };
+        var positions = new List<WalletPositionSnapshot>
+        {
+            new("0x1", "BTC", "Short", 1m, 80000m, 9000000m, 0m, 5m)
+        };
+
+        var filter = new WalletQualityFilter();
+        Assert.False(filter.HoldsLargePosition(positions, settings));
+    }
 }

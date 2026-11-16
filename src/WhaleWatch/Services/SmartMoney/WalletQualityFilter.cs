@@ -39,6 +39,17 @@ public sealed class WalletQualityFilter
         return fills.Count(IsClosingFill) >= settings.MinClosedTrades;
     }
 
+    public bool HoldsLargePosition(
+        IReadOnlyList<WalletPositionSnapshot> currentPositions,
+        SmartMoneySettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(currentPositions);
+        ArgumentNullException.ThrowIfNull(settings);
+
+        return settings.LargePositionBypassUsd > 0m
+            && currentPositions.Any(p => p.PositionValueUsd >= settings.LargePositionBypassUsd);
+    }
+
     // Flips ("Long > Short") and liquidations carry realised PnL but do not start with "Close".
     public static bool IsClosingFill(WalletFillEvent fill) =>
         fill.ClosedPnlUsd != 0m
